@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mythic Raid Tactical Planner</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+</head>
+<body>
+    <div id="app">
+        <!-- Row 1: 我的團隊 WCL -->
+        <div class="toolbar-row">
+            <label>我的團隊 WCL:</label>
+            <input id="ownReportId" type="text" placeholder="輸入 Report ID" value="2mYrpayGhN1PLRfF" class="input-report">
+            <button id="btnOwnFights" onclick="loadFights('own')">取得首領列表</button>
+            <select id="comboOwnFight" class="combo-fight"></select>
+            <button id="btnLoadRoster" onclick="loadRoster()" disabled>載入陣容</button>
+            <button id="btnLoadOwnDamage" onclick="loadOwnDamage()" disabled>載入承傷數據</button>
+        </div>
+
+        <!-- Row 2: 參考 WCL -->
+        <div class="toolbar-row">
+            <label>參考 WCL:&emsp;&emsp;</label>
+            <input id="refReportId" type="text" placeholder="輸入參考 Report ID (別人的 WCL)" class="input-report">
+            <button id="btnRefFights" onclick="loadFights('ref')">取得首領列表</button>
+            <select id="comboRefFight" class="combo-fight"></select>
+            <button id="btnLoadRef" onclick="loadReference()" disabled>導入承傷數據</button>
+        </div>
+
+        <!-- Row 3: 動作按鈕 -->
+        <div class="toolbar-row">
+            <button onclick="savePlan()">💾 儲存方案</button>
+            <button onclick="document.getElementById('loadPlanInput').click()">📂 載入方案</button>
+            <input id="loadPlanInput" type="file" accept=".json" style="display:none" onchange="loadPlan(event)">
+            <button onclick="exportMRT()">匯出 MRT Note</button>
+            <button onclick="importMRT()">匯入 MRT Note</button>
+            <span class="spacer"></span>
+            <span class="version-label">Ver 1.0.0 (Web) | Developer NC | Discord HaaaNaaaBiii</span>
+        </div>
+
+        <!-- Main content -->
+        <div class="main-content">
+            <!-- Left panel -->
+            <div class="left-panel" id="leftPanel">
+                <div class="panel-section">
+                    <h3>團隊陣容 (Roster)</h3>
+                    <ul id="rosterList" class="roster-list"></ul>
+                </div>
+                <div class="panel-section flex-grow">
+                    <h3>治療大招分配 (Healer CD Assignment)</h3>
+                    <div class="cd-table-container">
+                        <table id="healerCdTable">
+                            <thead>
+                                <tr>
+                                    <th style="width:100px">玩家</th>
+                                    <th style="width:120px">技能</th>
+                                    <th>分配時間 (MM:SS)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="healerCdBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Resizer -->
+            <div class="resizer" id="resizer"></div>
+
+            <!-- Right panel -->
+            <div class="right-panel" id="rightPanel">
+                <div class="chart-container" id="chartContainer">
+                    <div id="damageChart"></div>
+                </div>
+                <div class="resizer-h" id="resizerH"></div>
+                <div class="timeline-container" id="timelineContainer">
+                    <div class="timeline-header">
+                        <h3>首領技能時間軸 (點擊可在圖表上標記)</h3>
+                        <button onclick="clearMarkers()">清除標記</button>
+                    </div>
+                    <div class="timeline-table-wrap">
+                        <table id="timelineTable">
+                            <thead>
+                                <tr>
+                                    <th style="width:140px">時間</th>
+                                    <th>施放技能</th>
+                                </tr>
+                            </thead>
+                            <tbody id="timelineBody"></tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Skill assignment popup -->
+    <div id="skillPopup" class="skill-popup" style="display:none">
+        <div class="skill-popup-title">選擇技能分配</div>
+        <div id="skillPopupList"></div>
+    </div>
+
+    <!-- MRT Import dialog -->
+    <div id="mrtDialog" class="modal-overlay" style="display:none">
+        <div class="modal-box">
+            <h3>匯入 MRT Note</h3>
+            <textarea id="mrtTextarea" rows="12" placeholder="貼上 MRT Note 內容..."></textarea>
+            <div class="modal-buttons">
+                <button onclick="doImportMRT()">匯入</button>
+                <button onclick="closeMRTDialog()">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MRT Export dialog -->
+    <div id="mrtExportDialog" class="modal-overlay" style="display:none">
+        <div class="modal-box">
+            <h3>匯出 MRT Note</h3>
+            <textarea id="mrtExportTextarea" rows="12" readonly></textarea>
+            <div class="modal-buttons">
+                <button onclick="copyMRTExport()">複製到剪貼簿</button>
+                <button onclick="document.getElementById('mrtExportDialog').style.display='none'">關閉</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
