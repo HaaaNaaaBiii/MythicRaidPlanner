@@ -463,6 +463,7 @@ function renderChart() {
         yaxis: {title: '傷害量', color: '#aaa', gridcolor: '#333'},
         shapes, annotations,
         showlegend: false,
+        dragmode: false,
         margin: {l: 70, r: 20, t: 40, b: 40},
         hovermode: 'x unified',
     };
@@ -470,11 +471,14 @@ function renderChart() {
     Plotly.react(div, traces, layout, {
         responsive: true,
         displayModeBar: false,
+        scrollZoom: true,
     });
 
-    // Click handler for skill assignment
-    div.removeAllListeners && div.removeAllListeners('plotly_click');
-    div.on('plotly_click', onChartClick);
+    // Re-bindleft-click on the chart for skill assignment
+    if (!div._skillClickBound) {
+        div._skillClickBound = true;
+        div.addEventListener('click', onChartLeftClick);
+    }
 }
 
 function generateTimeTicks(times) {
@@ -500,12 +504,20 @@ function damageAt(sec) {
 }
 
 // ── Chart click → skill assignment popup ────────────────
-function onChartClick(data) {
-    if (!data.points || !data.points.length) return;
-    const clickSec = data.points[0].x;
-    if (clickSec < 0) return;
-    const timeStr = fmtSec(clickSec);
-    showSkillPopup(data.event, clickSec, timeStr);
+function onChartLeftClick(e) {
+    const div = document.getElementById('damageChart');
+    if (!div._fullLayout || !graphTimes.length) return;
+    const xaxis = div._fullLayout.xaxis;
+    if (!xaxis) return;
+    // Get click position relative to the plot area
+    const bb = div.getBoundingClientRect();
+    const pixelX = e.clientX - bb.left - div._fullLayout.margin.l;
+    // Check click is within the plot area
+    if (pixelX < 0 || pixelX > xaxis._length) return;
+    const dataX = xaxis.p2d(pixelX);
+    if (dataX == null || isNaN(dataX) || dataX < 0) return;
+    const timeStr = fmtSec(dataX);
+    showSkillPopup(e, dataX, timeStr);
 }
 
 function showSkillPopup(event, clickSec, timeStr) {
@@ -564,7 +576,7 @@ function isOnCooldown(rowIdx, clickSec) {
 }
 
 // Close popup on outside click
-document.addEventListener('click', (e) => {
+document.addEventListener('mousedown', (e) => {
     const popup = document.getElementById('skillPopup');
     if (popup.style.display === 'block' && !popup.contains(e.target)) {
         popup.style.display = 'none';
