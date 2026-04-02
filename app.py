@@ -116,8 +116,66 @@ class WCLClient:
             "end": float(end_time),
         })
 
+    def fetch_friendly_casts(self, report_id, fight_id, start_time, end_time):
+        query = """
+        query($code: String!, $fightId: Int!, $start: Float!, $end: Float!) {
+            reportData {
+                report(code: $code) {
+                    masterData {
+                        actors(type: "Player") { id name subType }
+                    }
+                    events(fightIDs: [$fightId], startTime: $start, endTime: $end,
+                           dataType: Casts, hostilityType: Friendlies,
+                           limit: 10000) { data }
+                }
+            }
+        }
+        """
+        return self._post(query, {
+            "code": report_id,
+            "fightId": int(fight_id),
+            "start": float(start_time),
+            "end": float(end_time),
+        })
+
 
 wcl = WCLClient()
+
+# ── Tracked healing / raid cooldown spells ──────────────
+TRACKED_SPELLS = {
+    # Priest (Holy)
+    64843:  {"name": "神聖禮頌",     "class": "Priest",      "cd": 180, "dur": 8,  "type": "大招"},
+    32375:  {"name": "群體驅魔",     "class": "Priest",      "cd": 120, "dur": 1,  "type": "大招"},
+    200183: {"name": "神化",         "class": "Priest",      "cd": 120, "dur": 20, "type": "爆發"},
+    265202: {"name": "聖言術：救贖", "class": "Priest",      "cd": 720, "dur": 1,  "type": "大招"},
+    # Priest (Discipline)
+    47536:  {"name": "心靈狂喜",     "class": "Priest",      "cd": 90,  "dur": 30, "type": "爆發"},
+    62618:  {"name": "真言術：壁",   "class": "Priest",      "cd": 180, "dur": 10, "type": "減傷"},
+    # Paladin (Holy)
+    31821:  {"name": "精通光環",     "class": "Paladin",     "cd": 180, "dur": 8,  "type": "大招"},
+    31884:  {"name": "復仇之怒",     "class": "Paladin",     "cd": 120, "dur": 20, "type": "爆發"},
+    # Shaman (Restoration)
+    98008:  {"name": "靈魂連結圖騰", "class": "Shaman",      "cd": 180, "dur": 6,  "type": "大招"},
+    108280: {"name": "療癒之潮圖騰", "class": "Shaman",      "cd": 180, "dur": 10, "type": "大招"},
+    114052: {"name": "升騰",         "class": "Shaman",      "cd": 180, "dur": 15, "type": "爆發"},
+    # Druid (Restoration)
+    740:    {"name": "寧靜",         "class": "Druid",       "cd": 180, "dur": 6,  "type": "大招"},
+    391528: {"name": "召喚眾靈",     "class": "Druid",       "cd": 120, "dur": 4,  "type": "爆發"},
+    33891:  {"name": "化身：生命之樹","class": "Druid",       "cd": 180, "dur": 30, "type": "爆發"},
+    106898: {"name": "奔竄咆哮",     "class": "Druid",       "cd": 120, "dur": 8,  "type": "減傷"},
+    # Monk (Mistweaver)
+    115310: {"name": "五氣歸元",     "class": "Monk",        "cd": 180, "dur": 6,  "type": "大招"},
+    322118: {"name": "喚醒玉珑",     "class": "Monk",        "cd": 120, "dur": 25, "type": "爆發"},
+    325197: {"name": "喚醒赤精",     "class": "Monk",        "cd": 120, "dur": 25, "type": "爆發"},
+    # Evoker (Preservation)
+    363534: {"name": "時光倒轉",     "class": "Evoker",      "cd": 240, "dur": 4,  "type": "大招"},
+    359816: {"name": "夢境飛行",     "class": "Evoker",      "cd": 120, "dur": 6,  "type": "大招"},
+    # Raid defensives
+    51052:  {"name": "反魔法力場",   "class": "DeathKnight", "cd": 240, "dur": 6,  "type": "減傷"},
+    97462:  {"name": "振奮咆哮",     "class": "Warrior",     "cd": 180, "dur": 10, "type": "減傷"},
+    196718: {"name": "黑暗",         "class": "DemonHunter", "cd": 300, "dur": 8,  "type": "減傷"},
+}
+TRACKED_SPELL_IDS = set(TRACKED_SPELLS.keys())
 
 # ── Helper: parse graph series ──────────────────────────
 def parse_graph(raw_graph):
@@ -371,6 +429,52 @@ def api_save_plan():
     """Return JSON plan as download."""
     body = request.get_json(force=True)
     return jsonify(body)
+
+
+@app.route('/api/cooldown-timeline', methods=['POST'])
+def api_cooldown_timeline():
+    """Return actual healing/raid CD usage from a fight."""
+    body = request.get_json(force=True)
+    report_id = body.get('report_id', '').strip()
+    fight = body.get('fight')
+    if not report_id or not fight:
+        return jsonify({'error': '缺少參數'}), 400
+    try:
+        data = wcl.fetch_friendly_casts(
+            report_id, fight['id'], fight['start'], fight['end'])
+        rd = data.get('data', {}).get('reportData', {}).get('report', {})
+
+        # Build actor lookup: id → {name, class}
+        actors = rd.get('masterData', {}).get('actors', [])
+        actor_map = {a['id']: {'name': a['name'], 'class': a.get('subType', 'Unknown')}
+                     for a in actors}
+
+        events = rd.get('events', {}).get('data', [])
+        fight_start = float(fight['start'])
+        results = []
+        for ev in events:
+            if ev.get('type') != 'cast':
+                continue
+            sid = ev.get('abilityGameID', 0)
+            if sid not in TRACKED_SPELL_IDS:
+                continue
+            spell = TRACKED_SPELLS[sid]
+            source = actor_map.get(ev.get('sourceID', 0), {})
+            player_name = source.get('name', '未知')
+            player_class = source.get('class', 'Unknown')
+            time_sec = (ev['timestamp'] - fight_start) / 1000.0
+            results.append({
+                'time_sec': round(time_sec, 2),
+                'player_name': player_name,
+                'player_class': player_class,
+                'spell_name': spell['name'],
+                'spell_id': sid,
+                'duration': spell['dur'],
+                'type': spell['type'],
+            })
+        return jsonify({'cooldowns': results})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 
 def _extract_healers(actors, pd_raw):

@@ -17,17 +17,23 @@ const CLASS_COLORS = {
     Warrior:"#C69B6D"
 };
 const HEALER_COOLDOWNS = {
-    Priest:  [{name:"神聖禮頌",spell_id:64843,cd:180,dur:8},{name:"群體驅魔",spell_id:32375,cd:120,dur:1}],
-    Paladin: [{name:"精通光環",spell_id:31821,cd:180,dur:8}],
-    Shaman:  [{name:"靈魂連結圖騰",spell_id:98008,cd:180,dur:6},{name:"療癒之潮圖騰",spell_id:108280,cd:180,dur:10}],
-    Druid:   [{name:"寧靜",spell_id:740,cd:180,dur:6}],
-    Monk:    [{name:"五氣歸元",spell_id:115310,cd:180,dur:6}],
-    Evoker:  [{name:"時光倒轉",spell_id:363534,cd:240,dur:4}],
+    Priest:  [{name:"神聖禮頌",spell_id:64843,cd:180,dur:8},{name:"群體驅魔",spell_id:32375,cd:120,dur:1},
+              {name:"神化",spell_id:200183,cd:120,dur:20},{name:"聖言術：救贖",spell_id:265202,cd:720,dur:1},
+              {name:"心靈狂喜",spell_id:47536,cd:90,dur:30},{name:"真言術：壁",spell_id:62618,cd:180,dur:10}],
+    Paladin: [{name:"精通光環",spell_id:31821,cd:180,dur:8},{name:"復仇之怒",spell_id:31884,cd:120,dur:20}],
+    Shaman:  [{name:"靈魂連結圖騰",spell_id:98008,cd:180,dur:6},{name:"療癒之潮圖騰",spell_id:108280,cd:180,dur:10},
+              {name:"升騰",spell_id:114052,cd:180,dur:15}],
+    Druid:   [{name:"寧靜",spell_id:740,cd:180,dur:6},{name:"召喚眾靈",spell_id:391528,cd:120,dur:4},
+              {name:"化身：生命之樹",spell_id:33891,cd:180,dur:30}],
+    Monk:    [{name:"五氣歸元",spell_id:115310,cd:180,dur:6},{name:"喚醒玉珑",spell_id:322118,cd:120,dur:25},
+              {name:"喚醒赤精",spell_id:325197,cd:120,dur:25}],
+    Evoker:  [{name:"時光倒轉",spell_id:363534,cd:240,dur:4},{name:"夢境飛行",spell_id:359816,cd:120,dur:6}],
 };
 const DRUID_UTILITY = {name:"奔竄咆哮",spell_id:106898,cd:120,dur:8};
 const EXTRA_RAID_CDS = {
     DeathKnight:[{name:"反魔法力場",spell_id:51052,cd:240,dur:6}],
     Warrior:[{name:"振奮咆哮",spell_id:97462,cd:180,dur:10}],
+    DemonHunter:[{name:"黑暗",spell_id:196718,cd:300,dur:8}],
 };
 
 // Build cd lookup
@@ -78,6 +84,8 @@ let currentActors = [];
 let currentTimeline = [];  // [{time, start_sec, end_sec, spell_id, name}]
 let healerRows = [];       // [{player, playerClass, skill, spell_id, times:''}]
 let markedRows = new Set();
+let actualCooldowns = [];  // [{time_sec, player_name, player_class, spell_name, spell_id, duration, type}]
+let refCooldowns = [];     // same structure, from reference WCL
 
 // ── API helpers ─────────────────────────────────────────
 async function apiPost(url, body) {
@@ -96,6 +104,13 @@ function fmtSec(s) {
     return `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
 }
 
+function hexToRgba(hex, alpha) {
+    const r = parseInt(hex.slice(1,3), 16);
+    const g = parseInt(hex.slice(3,5), 16);
+    const b = parseInt(hex.slice(5,7), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+}
+
 function parseMultiTimes(text) {
     const result = [];
     for (const seg of text.split(',')) {
@@ -111,7 +126,10 @@ async function loadFights(which) {
     const inputId = which === 'own' ? 'ownReportId' : 'refReportId';
     const comboId = which === 'own' ? 'comboOwnFight' : 'comboRefFight';
     const btnId   = which === 'own' ? 'btnOwnFights'  : 'btnRefFights';
-    const reportId = document.getElementById(inputId).value.trim();
+
+    // Parse WCL URL → extract report code (and optional fight ID)
+    const parsed = applyWclUrl(which);
+    const reportId = parsed.code;
     if (!reportId) return;
 
     const btn = document.getElementById(btnId);
@@ -133,8 +151,19 @@ async function loadFights(which) {
         if (which === 'own') {
             document.getElementById('btnLoadRoster').disabled = fights.length === 0;
             document.getElementById('btnLoadOwnDamage').disabled = fights.length === 0;
+            document.getElementById('btnLoadTimeline').disabled = fights.length === 0;
         } else {
             document.getElementById('btnLoadRef').disabled = fights.length === 0;
+            document.getElementById('btnLoadRefTimeline').disabled = fights.length === 0;
+        }
+        // Auto-select fight if parsed from URL hash
+        if (parsed.fight != null) {
+            for (let i = 0; i < combo.options.length; i++) {
+                if (parseInt(combo.options[i].value) === parsed.fight) {
+                    combo.selectedIndex = i;
+                    break;
+                }
+            }
         }
     } catch(e) { alert('錯誤: ' + e.message); }
     finally {
@@ -264,6 +293,12 @@ function buildHealerCdTable(actors, healers) {
     for (const name of wars) {
         for (const cd of (EXTRA_RAID_CDS.Warrior || []))
             healerRows.push({player: name, playerClass: 'Warrior',
+                             skill: cd.name, spell_id: cd.spell_id, times: ''});
+    }
+    const dhs = actors.filter(a => a.class === 'DemonHunter').map(a => a.name).sort();
+    for (const name of dhs) {
+        for (const cd of (EXTRA_RAID_CDS.DemonHunter || []))
+            healerRows.push({player: name, playerClass: 'DemonHunter',
                              skill: cd.name, spell_id: cd.spell_id, times: ''});
     }
     healerRows.push({player: '', playerClass: '', skill: '個減', spell_id: 0, times: ''});
@@ -447,6 +482,70 @@ function renderChart() {
                 xanchor: 'left', yshift: -10,
             });
             lane++;
+        }
+    }
+
+    // Actual cooldown usage overlay (own + ref WCL data)
+    const allActualCDs = [
+        ...actualCooldowns.map(cd => ({...cd, source: 'own'})),
+        ...refCooldowns.map(cd => ({...cd, source: 'ref'})),
+    ];
+    if (allActualCDs.length) {
+        let actLane = 0;
+        for (const cd of allActualCDs) {
+            const color = CLASS_COLORS[cd.player_class] || '#FFFFFF';
+            const sec = cd.time_sec;
+            const endSec = sec + cd.duration;
+            // Draw at top of chart, stacked downward
+            const yDraw = yMax * (0.92 - 0.035 * (actLane % 20));
+            const dashStyle = cd.type === '大招' ? 'solid' : (cd.type === '爆發' ? 'dot' : 'dash');
+            const barWidth = cd.type === '大招' ? 6 : (cd.type === '爆發' ? 4 : 5);
+            const sourceTag = cd.source === 'ref' ? '(參考)' : '';
+            const labelOpacity = cd.source === 'ref' ? 0.55 : 0.85;
+
+            if (cd.duration > 1) {
+                // Semi-transparent filled rectangle for duration
+                const fillAlpha = cd.source === 'ref' ? 0.1 : 0.2;
+                const rgbaFill = hexToRgba(color, fillAlpha);
+                shapes.push({
+                    type: 'rect', x0: sec, x1: endSec,
+                    y0: yDraw - yMax * 0.012, y1: yDraw + yMax * 0.012,
+                    fillcolor: rgbaFill,
+                    line: {color, width: 1.5, dash: dashStyle},
+                    layer: 'above',
+                });
+                // Also draw as trace for hover info
+                traces.push({
+                    x: [sec, endSec], y: [yDraw, yDraw],
+                    type: 'scatter', mode: 'lines',
+                    line: {color, width: barWidth, dash: dashStyle},
+                    showlegend: false,
+                    opacity: cd.source === 'ref' ? 0.45 : 0.7,
+                    hovertemplate: `${cd.player_name} ${cd.spell_name} [${cd.type}]${sourceTag}<br>` +
+                                  `${fmtSec(sec)} - ${fmtSec(endSec)}<extra></extra>`,
+                });
+            } else {
+                // Instant cast — draw a marker
+                traces.push({
+                    x: [sec], y: [yDraw],
+                    type: 'scatter', mode: 'markers',
+                    marker: {color, size: 8, symbol: cd.source === 'ref' ? 'star-diamond' : 'diamond'},
+                    showlegend: false,
+                    opacity: cd.source === 'ref' ? 0.5 : 0.7,
+                    hovertemplate: `${cd.player_name} ${cd.spell_name} [${cd.type}]${sourceTag}<br>` +
+                                  `${fmtSec(sec)}<extra></extra>`,
+                });
+            }
+
+            annotations.push({
+                x: sec, y: yDraw,
+                text: `▸${cd.player_name} ${cd.spell_name}${sourceTag}`,
+                showarrow: false,
+                font: {color, size: 8},
+                xanchor: 'left', yshift: 10,
+                opacity: labelOpacity,
+            });
+            actLane++;
         }
     }
 
@@ -695,6 +794,54 @@ function loadPlan(event) {
     };
     reader.readAsText(file);
     event.target.value = '';
+}
+
+// ── Load actual cooldown timeline ────────────────────────
+async function loadCooldownTimeline(which) {
+    which = which || 'own';
+    const inputId = which === 'own' ? 'ownReportId' : 'refReportId';
+    const reportId = document.getElementById(inputId).value.trim();
+    const fight = getSelectedFight(which);
+    if (!reportId || !fight) { alert('請先選擇報告與戰鬥'); return; }
+
+    const btnId = which === 'own' ? 'btnLoadTimeline' : 'btnLoadRefTimeline';
+    const btn = document.getElementById(btnId);
+    btn.disabled = true; btn.textContent = '載入中...';
+    try {
+        const data = await apiPost('/api/cooldown-timeline', {report_id: reportId, fight});
+        const cds = data.cooldowns || [];
+        if (which === 'own') actualCooldowns = cds; else refCooldowns = cds;
+        renderChart();
+        const count = cds.length;
+        const players = new Set(cds.map(c => c.player_name));
+        const label = which === 'own' ? '載入技能時間軸' : '導入技能時間軸';
+        btn.textContent = `已載入 ${count} 筆 (${players.size} 人)`;
+        setTimeout(() => { btn.textContent = label; }, 3000);
+    } catch(e) { alert('載入失敗: ' + e.message); }
+    finally { btn.disabled = false; }
+}
+
+// ── URL parsing: extract report code from WCL URL ───────
+function parseWclUrl(input) {
+    input = input.trim();
+    // Already a plain report code (alphanumeric only)
+    if (/^[A-Za-z0-9]+$/.test(input)) return { code: input, fight: null };
+    // Parse URL like https://www.warcraftlogs.com/reports/XXXXX or https://tw.warcraftlogs.com/reports/XXXXX
+    const urlMatch = input.match(/warcraftlogs\.com\/reports\/([A-Za-z0-9]+)/);
+    if (!urlMatch) return { code: input, fight: null };
+    const code = urlMatch[1];
+    // Parse optional #fight=N
+    const fightMatch = input.match(/#.*fight=(\d+)/);
+    const fightId = fightMatch ? parseInt(fightMatch[1]) : null;
+    return { code, fight: fightId };
+}
+
+function applyWclUrl(which) {
+    const inputId = which === 'own' ? 'ownReportId' : 'refReportId';
+    const el = document.getElementById(inputId);
+    const parsed = parseWclUrl(el.value);
+    el.value = parsed.code;
+    return parsed;
 }
 
 // ── Resizer logic ───────────────────────────────────────

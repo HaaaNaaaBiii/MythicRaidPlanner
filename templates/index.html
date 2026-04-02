@@ -12,20 +12,22 @@
         <!-- Row 1: 我的團隊 WCL -->
         <div class="toolbar-row">
             <label>我的團隊 WCL:</label>
-            <input id="ownReportId" type="text" placeholder="輸入 Report ID" value="" class="input-report">
+            <input id="ownReportId" type="text" placeholder="輸入 Report ID 或 WCL 網址" value="2mYrpayGhN1PLRfF" class="input-report">
             <button id="btnOwnFights" onclick="loadFights('own')">取得首領列表</button>
             <select id="comboOwnFight" class="combo-fight"></select>
             <button id="btnLoadRoster" onclick="loadRoster()" disabled>載入陣容</button>
             <button id="btnLoadOwnDamage" onclick="loadOwnDamage()" disabled>載入承傷數據</button>
+            <button id="btnLoadTimeline" onclick="loadCooldownTimeline('own')" disabled>載入技能時間軸</button>
         </div>
 
         <!-- Row 2: 參考 WCL -->
         <div class="toolbar-row">
             <label>參考 WCL:&emsp;&emsp;</label>
-            <input id="refReportId" type="text" placeholder="輸入參考 Report ID (別人的 WCL)" class="input-report">
+            <input id="refReportId" type="text" placeholder="輸入參考 Report ID 或 WCL 網址" class="input-report">
             <button id="btnRefFights" onclick="loadFights('ref')">取得首領列表</button>
             <select id="comboRefFight" class="combo-fight"></select>
             <button id="btnLoadRef" onclick="loadReference()" disabled>導入承傷數據</button>
+            <button id="btnLoadRefTimeline" onclick="loadCooldownTimeline('ref')" disabled>導入技能時間軸</button>
         </div>
 
         <!-- Row 3: 動作按鈕 -->
